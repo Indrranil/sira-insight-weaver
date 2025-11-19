@@ -12,7 +12,10 @@ export interface ResearchItem {
 export interface PipelineResult {
   topic: string;
   results: ResearchItem[];
+  knowledge_graph: KnowledgeGraph;   
+  count: number;                     
 }
+
 
 export interface HealthStatus {
   serpapi: string;
@@ -108,12 +111,15 @@ class APIClient {
     return this.request<HealthStatus>("/api/pipeline/health");
   }
 
-  async research(topic: string, userId: string) {
-    return this.request<PipelineResult>("/api/pipeline/research", {
-      method: "POST",
-      body: JSON.stringify({ topic, user_id: userId }),
-    });
-  }
+ async research(topic: string, userId: string) {
+  return this.request<PipelineResult>(
+    `/api/pipeline/research?topic=${encodeURIComponent(topic)}&user_id=${userId}`,
+    {
+      method: "GET"
+    }
+  );
+}
+
 
   async upsertMemory(userId: string, doc: MemoryDoc) {
     return this.request<{ ok: boolean; count: number }>("/api/memory/upsert", {

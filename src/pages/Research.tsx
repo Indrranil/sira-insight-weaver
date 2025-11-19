@@ -44,7 +44,7 @@ export default function Research() {
       const result = await apiClient.research(userMessage, user.id);
 
       // Fetch updated KG
-      const kgData = await apiClient.getKnowledgeGraph();
+      const kgData = result.knowledge_graph;
       setCurrentKG(kgData);
 
       setMessages((prev) => [
@@ -53,7 +53,7 @@ export default function Research() {
           role: "assistant",
           content: `I found ${result.results.length} research results on "${result.topic}". Memory and knowledge graph have been updated with these insights.`,
           showAutomation: true,
-          knowledgeGraph: kgData,
+          knowledgeGraph: result.knowledge_graph,
           results: result.results,
         },
       ]);
