@@ -70,7 +70,17 @@ export function AppSidebar() {
     if (!user) return;
     try {
       const data = await apiClient.listConversations(user.id);
-      setConversations(data);
+      if (Array.isArray(data)) {
+        // API already returned a flat list
+        setConversations(data);
+      } else if (data && typeof data === "object") {
+        // API returned grouped conversations (e.g. { today: [], yesterday: [], previous_7_days: [], older: [] })
+        // flatten them into a single Conversation[] for the state
+        const flattened = Object.values(data).flat() as Conversation[];
+        setConversations(flattened);
+      } else {
+        setConversations([]);
+      }
     } catch (error) {
       console.error("Failed to load conversations:", error);
     }

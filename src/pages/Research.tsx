@@ -43,7 +43,7 @@ export default function Research() {
     if (!user) return;
     try {
       const conv = await apiClient.createConversation(user.id, "New Research");
-      setConversationId(conv.id);
+      setConversationId(conv.conversation_id);
       setMessages([]);
       setCurrentKG(null);
     } catch (error: any) {
@@ -62,7 +62,7 @@ export default function Research() {
 
     try {
       // Save user message to conversation
-      await apiClient.addConversationMessage(conversationId, "user", userMessage);
+      await apiClient.sendMessage(conversationId, "user", userMessage);
 
       // Run research
       const result = await apiClient.research(userMessage, user.id);
@@ -74,7 +74,7 @@ export default function Research() {
       const assistantMessage = `I found ${result.results.length} research results on "${result.topic}". Memory and knowledge graph have been updated with these insights.`;
 
       // Save assistant message to conversation
-      await apiClient.addConversationMessage(conversationId, "assistant", assistantMessage);
+      await apiClient.sendMessage(conversationId, "agent", assistantMessage);
 
       setMessages((prev) => [
         ...prev,

@@ -23,8 +23,8 @@ export function SchedulerDrawer({ isOpen, onClose }: SchedulerDrawerProps) {
   const loadJobs = async () => {
     setLoading(true);
     try {
-      const result = await apiClient.listScheduledJobs();
-      setJobs(result.jobs);
+      const jobs = await apiClient.listScheduledJobs();
+      setJobs(jobs);
     } catch (error: any) {
       toast.error(error.message || "Failed to load scheduled jobs");
     } finally {

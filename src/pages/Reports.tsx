@@ -22,7 +22,13 @@ export default function Reports() {
     if (!user) return;
     try {
       const data = await apiClient.listConversations(user.id);
-      setConversations(data);
+      // listConversations may return a grouped object like:
+      // { today: [], yesterday: [], previous_7_days: [], older: [] }
+      // Normalize to a flat array of Conversation before updating state.
+      const conversationsArray: Conversation[] = Array.isArray(data)
+        ? data
+        : (Object.values(data).flat() as Conversation[]);
+      setConversations(conversationsArray);
     } catch (error) {
       console.error("Failed to load conversations:", error);
     }
@@ -40,10 +46,27 @@ export default function Reports() {
     }
   };
 
-  const handleDownload = async (conversationId: string) => {
-    toast.info("Preparing download...");
-    // Implement download logic using /api/reports/{job_id}
+    const handleDownload = async (conversationId: string) => {
+    try {
+      toast.info("Preparing report...");
+      const blob = await apiClient.downloadConversationReport(conversationId);
+      const url = window.URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `SIRA_Conversation_${conversationId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+
+      toast.success("Report downloaded");
+    } catch (error: any) {
+      console.error("Download error:", error);
+      toast.error(error.message || "Failed to download report");
+    }
   };
+
 
   return (
     <div className="flex flex-col h-screen">
@@ -94,9 +117,9 @@ export default function Reports() {
                         variant="outline"
                         size="sm"
                         onClick={() => handleDownload(conv.id)}
-                      >
-                        <Download className="h-4 w-4 mr-1" />
-                        Download
+                        >
+                          <Download className="h-4 w-4 mr-1" />
+                              Download
                       </Button>
                     </div>
                   </div>

@@ -26,15 +26,21 @@ export interface HealthStatus {
 
 export interface MemoryDoc {
   title: string;
-  abstract: string;
+  abstract: string;   // becomes `text` backend
   url: string;
-  source: string;
+  source: string;     // optional, not used by backend
 }
+
+
 
 export interface MemorySearchResult {
   score: number;
-  doc: MemoryDoc;
+  text: string;
+  url: string;
+  title: string;
+  id?: string;
 }
+
 
 export interface KnowledgeGraphNode {
   data: {
@@ -139,87 +145,183 @@ class APIClient {
   }
 
  async research(topic: string, userId: string) {
+  const params = new URLSearchParams({
+    topic,
+    user_id: userId
+  });
+
   return this.request<PipelineResult>(
-    `/api/pipeline/research?topic=${encodeURIComponent(topic)}&user_id=${userId}`,
-    {
-      method: "GET"
-    }
+    `/api/pipeline/research?${params.toString()}`
   );
 }
 
 
-  async upsertMemory(userId: string, doc: MemoryDoc) {
-    return this.request<{ ok: boolean; count: number }>("/api/memory/upsert", {
+
+    async upsertMemory(userId: string, doc: MemoryDoc) {
+    return this.request<{ id: string }>("/api/memory/add", {
       method: "POST",
-      body: JSON.stringify({ user_id: userId, ...doc }),
+      body: JSON.stringify({
+        user_id: userId,
+        text: doc.abstract || doc.title,   // fallback if needed
+        url: doc.url || "",
+        title: doc.title || "",
+      }),
     });
   }
 
-  async searchMemory(userId: string, query: string, k: number = 5) {
-    return this.request<MemorySearchResult[]>(
-      `/api/memory/search?user_id=${userId}&q=${encodeURIComponent(query)}&k=${k}`
+
+   async searchMemory(userId: string, query: string) {
+    const res = await this.request<{ matches: MemorySearchResult[] }>(
+      `/api/memory/search?user_id=${userId}&q=${encodeURIComponent(query)}`
     );
+    return res.matches;
   }
+
 
   async getKnowledgeGraph() {
     return this.request<KnowledgeGraph>("/api/kg");
   }
 
-  async addScheduledJob(topic: string, userId: string, intervalSeconds: number) {
-    return this.request<{ ok: boolean; job_id: string }>("/api/schedule/add", {
-      method: "POST",
-      body: JSON.stringify({ topic, user_id: userId, interval_seconds: intervalSeconds }),
+    async addScheduledJob(topic: string, userId: string, intervalSeconds: number) {
+    // Backend: POST /api/schedule/start?topic=...&user_id=...&interval_seconds=...
+    const params = new URLSearchParams({
+      topic,
+      user_id: userId,
+      interval_seconds: String(intervalSeconds),
     });
+
+    return this.request<{ status: string; job_id: string }>(
+      `/api/schedule/start?${params.toString()}`,
+      {
+        method: "POST",
+      }
+    );
   }
 
   async cancelScheduledJob(jobId: string) {
-    return this.request<{ ok: boolean }>("/api/schedule/cancel", {
-      method: "POST",
-      body: JSON.stringify({ job_id: jobId }),
-    });
+    // Use the existing /api/schedule/cancel which expects job_id in body
+    return this.request<{ status: string; job_id: string; success: boolean }>(
+      "/api/schedule/cancel",
+      {
+        method: "POST",
+        body: JSON.stringify({ job_id: jobId }),
+      }
+    );
   }
 
-  async listScheduledJobs() {
-    return this.request<{ jobs: ScheduledJob[] }>("/api/schedule/list");
+  async listScheduledJobs(): Promise<ScheduledJob[]> {
+    /**
+     * Backend returns an object:
+     * {
+     *   "<job_id>": { topic, user_id, interval or interval_seconds, next_run? },
+     *   ...
+     * }
+     * We convert that into an array of ScheduledJob for the UI.
+     */
+    const raw = await this.request<
+      Record<string, { topic: string; interval?: number; interval_seconds?: number; next_run?: string }>
+    >("/api/schedule/list");
+
+    return Object.entries(raw).map(([id, job]) => ({
+      id,
+      topic: job.topic,
+      interval_seconds: job.interval_seconds ?? job.interval ?? 0,
+      next_run: job.next_run,
+    }));
   }
+
 
   // Conversations
-  async createConversation(userId: string, topic: string) {
-    return this.request<Conversation>("/api/conversations", {
+ /* -----------------------------
+   Conversations API (FIXED)
+--------------------------------*/
+
+async createConversation(userId: string, topicTitle: string) {
+  return this.request<{ conversation_id: string }>(
+    "/api/conversations/start",
+    {
       method: "POST",
-      body: JSON.stringify({ user_id: userId, topic }),
-    });
-  }
+      body: JSON.stringify({ user_id: userId, topic_title: topicTitle }),
+    }
+  );
+}
 
-  async listConversations(userId: string) {
-    return this.request<Conversation[]>(`/api/conversations?user_id=${userId}`);
-  }
-
-  async getConversation(conversationId: string) {
-    return this.request<Conversation>(`/api/conversations/${conversationId}`);
-  }
-
-  async getConversationMessages(conversationId: string) {
-    return this.request<Message[]>(`/api/conversations/${conversationId}/messages`);
-  }
-
-  async addConversationMessage(conversationId: string, role: "user" | "assistant", content: string) {
-    return this.request<Message>(`/api/conversations/${conversationId}/messages`, {
+async sendMessage(conversationId: string, role: "user" | "agent", content: string, meta?: any) {
+  return this.request<{ message_id: string }>(
+    `/api/conversations/${conversationId}/message`,
+    {
       method: "POST",
-      body: JSON.stringify({ role, content }),
-    });
-  }
+      body: JSON.stringify({ role, content, meta }),
+    }
+  );
+}
+
+async listConversations(userId: string) {
+  return this.request<{
+    today: any[];
+    yesterday: any[];
+    previous_7_days: any[];
+    older: any[];
+  }>(`/api/conversations/list?user_id=${encodeURIComponent(userId)}`);
+}
+
+async getConversation(conversationId: string, limit: number = 50, offset: number = 0) {
+  return this.request<{
+    conversation: any;
+    messages: any[];
+  }>(`/api/conversations/${conversationId}?limit=${limit}&offset=${offset}`);
+}
+
+async deleteConversation(conversationId: string) {
+  return this.request<{ status: string; conversation_id: string }>(
+    `/api/conversations/${conversationId}`,
+    { method: "DELETE" }
+  );
+}
+
+async renameConversation(conversationId: string, newTitle: string) {
+  return this.request<{
+    status: string;
+    conversation_id: string;
+    new_title: string;
+  }>(`/api/conversations/${conversationId}/rename`, {
+    method: "POST",
+    body: JSON.stringify({ new_title: newTitle }),
+  });
+}
+
 
   // Reports
-  async getTimelineReport(jobId: string) {
-    return this.request<TimelineReport>(`/api/reports/${jobId}`);
-  }
+  
 
   async generateConversationReport(conversationId: string) {
     return this.request<{ report_id: string }>(`/api/report/${conversationId}`, {
       method: "POST",
     });
   }
+
+  async downloadConversationReport(conversationId: string): Promise<Blob> {
+    const headers: HeadersInit = {};
+
+    if (this.token) {
+      headers["Authorization"] = `Bearer ${this.token}`;
+    }
+
+    const response = await fetch(
+      `${this.baseURL}/api/reports/conversation/${conversationId}/download`,
+      {
+        method: "GET",
+        headers,
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to download report: ${response.status}`);
+    }
+
+    return await response.blob();
+  }
+
 
   async getScheduleHistory(userId: string) {
     return this.request<any>(`/api/schedule/history?user_id=${userId}`);
