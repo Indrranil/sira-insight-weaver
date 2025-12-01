@@ -1,7 +1,9 @@
-// src/components/AppSidebar.tsx
 import { useState, useEffect } from "react";
-import { FileText, User, Plus, Clock, MessageSquare } from "lucide-react";
-import { NavLink } from "react-router-dom";
+import { 
+  FileText, User, Plus, Clock, MessageSquare, 
+  MoreHorizontal, Trash2, Pencil 
+} from "lucide-react";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import {
   Sidebar,
   SidebarContent,
@@ -13,12 +15,31 @@ import {
   SidebarMenuItem,
   SidebarHeader,
   SidebarFooter,
+  SidebarMenuAction,
 } from "@/components/ui/sidebar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client"; 
 import { SchedulerDrawer } from "@/components/SchedulerDrawer";
 import { apiClient, type Conversation } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "sonner";
 
 const staticItems = [
   { title: "New Research", url: "/", icon: Plus },
@@ -60,7 +81,15 @@ function groupConversationsByTime(conversations: Conversation[]) {
 export function AppSidebar() {
   const [showScheduler, setShowScheduler] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  
+  // ✅ State for Actions
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [deleteId, setDeleteId] = useState<string | null>(null); // For Modal
+
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
 
   // 1. Initial Load
   useEffect(() => {
@@ -69,7 +98,7 @@ export function AppSidebar() {
     }
   }, [user]);
 
-  // 2. Real-time Listener (With Timeout Fix)
+  // 2. Real-time Listener
   useEffect(() => {
     if (!user) return;
 
@@ -81,15 +110,15 @@ export function AppSidebar() {
           event: "*",
           schema: "public",
           table: "conversations",
-          filter: `user_id=eq.${user.id}`, // Filter is safe if RLS is correct, otherwise remove
+          filter: `user_id=eq.${user.id}`,
         },
         () => {
-          console.log("🔔 Realtime Update Received! Refreshing list...");
-          
-          // ✅ TIMEOUT ADDED: Waits 1.5s for DB to finish saving before fetching
-          setTimeout(() => {
-            loadConversations();
-          }, 1500);
+          // ✅ Prevent refresh if user is currently renaming (typing)
+          if (!editingId) {
+             setTimeout(() => {
+               loadConversations();
+             }, 1500);
+          }
         }
       )
       .subscribe();
@@ -97,7 +126,7 @@ export function AppSidebar() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user]);
+  }, [user, editingId]); // Depend on editingId so we pause updates while editing
 
   const loadConversations = async () => {
     if (!user) return;
@@ -113,7 +142,7 @@ export function AppSidebar() {
               flattened.push({
                 id: item.id,
                 user_id: user.id,
-                topic_title: item.title || "Untitled",
+                topic_title: item.title || item.topic_title || "Untitled",
                 created_at: item.created_at,
                 updated_at: item.created_at,
               });
@@ -122,25 +151,115 @@ export function AppSidebar() {
         });
       }
       
+      // Sort: Newest first
+      flattened.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      
       setConversations(flattened);
     } catch (error) {
       console.error("Failed to load conversations:", error);
     }
   };
 
+  // --- ACTIONS ---
+
+  const confirmDelete = async () => {
+    if (!deleteId) return;
+    try {
+      const idToDelete = deleteId;
+      setDeleteId(null); // Close modal
+
+      // Optimistic update
+      setConversations(prev => prev.filter(c => c.id !== idToDelete));
+      await apiClient.deleteConversation(idToDelete);
+      
+      // If we deleted the active chat, go to home
+      if (location.pathname.includes(idToDelete)) {
+        navigate("/");
+      }
+      toast.success("Conversation deleted");
+    } catch (error) {
+      toast.error("Failed to delete");
+      loadConversations(); // Revert
+    }
+  };
+
+  const startEditing = (conv: Conversation) => {
+    setEditingId(conv.id);
+    setEditTitle(conv.topic_title || "Untitled");
+  };
+
+  const saveTitle = async () => {
+    if (!editingId || !editTitle.trim()) {
+      setEditingId(null);
+      return;
+    }
+    try {
+      const id = editingId;
+      const title = editTitle;
+      setEditingId(null); // Close Input
+      
+      // Optimistic update
+      setConversations(prev => prev.map(c => c.id === id ? { ...c, topic_title: title } : c));
+      
+      await apiClient.renameConversation(id, title);
+    } catch (error) {
+      toast.error("Failed to rename");
+      loadConversations();
+    }
+  };
+
   const groupedChats = groupConversationsByTime(conversations);
 
-  // Helper to render links
-  const renderLink = (conv: Conversation) => (
-    <SidebarMenuItem key={conv.id}>
-      <SidebarMenuButton asChild>
-        <NavLink to={`/chat/${conv.id}`}>
-          <MessageSquare className="h-4 w-4" />
-          <span className="truncate">{conv.topic_title || "Untitled"}</span>
-        </NavLink>
-      </SidebarMenuButton>
-    </SidebarMenuItem>
-  );
+  // --- RENDER ITEM HELPER ---
+  const renderItem = (conv: Conversation) => {
+    const isEditing = editingId === conv.id;
+
+    return (
+      <SidebarMenuItem key={conv.id}>
+        {isEditing ? (
+          <div className="flex items-center px-2 py-1 w-full gap-2">
+            <Input 
+              value={editTitle} 
+              onChange={(e) => setEditTitle(e.target.value)}
+              onBlur={saveTitle} // Save when clicking away
+              onKeyDown={(e) => e.key === "Enter" && saveTitle()} // Save on Enter
+              autoFocus
+              className="h-8 text-sm bg-background"
+            />
+          </div>
+        ) : (
+          <>
+            <SidebarMenuButton asChild>
+              <NavLink to={`/chat/${conv.id}`}>
+                <MessageSquare className="h-4 w-4" />
+                <span className="truncate">{conv.topic_title || "Untitled"}</span>
+              </NavLink>
+            </SidebarMenuButton>
+            
+            {/* ✅ Dropdown for Edit/Delete */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <SidebarMenuAction showOnHover>
+                  <MoreHorizontal className="h-4 w-4" />
+                  <span className="sr-only">More</span>
+                </SidebarMenuAction>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-48" side="right" align="start">
+                <DropdownMenuItem onClick={() => startEditing(conv)}>
+                  <Pencil className="mr-2 h-4 w-4" />
+                  Rename
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setDeleteId(conv.id)} className="text-red-500 focus:text-red-500">
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        )}
+      </SidebarMenuItem>
+    );
+  };
 
   return (
     <>
@@ -198,28 +317,34 @@ export function AppSidebar() {
                 {groupedChats.today.length > 0 && (
                   <>
                     <div className="px-2 py-1 text-xs text-muted-foreground">Today</div>
-                    {groupedChats.today.map(renderLink)}
+                    {groupedChats.today.map(renderItem)}
                   </>
                 )}
 
                 {groupedChats.yesterday.length > 0 && (
                   <>
-                    <div className="px-2 py-1 text-xs text-muted-foreground mt-2">Yesterday</div>
-                    {groupedChats.yesterday.map(renderLink)}
+                    <div className="px-2 py-1 text-xs text-muted-foreground mt-2">
+                      Yesterday
+                    </div>
+                    {groupedChats.yesterday.map(renderItem)}
                   </>
                 )}
 
                 {groupedChats["previous-7-days"].length > 0 && (
                   <>
-                    <div className="px-2 py-1 text-xs text-muted-foreground mt-2">Previous 7 Days</div>
-                    {groupedChats["previous-7-days"].map(renderLink)}
+                    <div className="px-2 py-1 text-xs text-muted-foreground mt-2">
+                      Previous 7 Days
+                    </div>
+                    {groupedChats["previous-7-days"].map(renderItem)}
                   </>
                 )}
 
                 {groupedChats.older.length > 0 && (
                   <>
-                    <div className="px-2 py-1 text-xs text-muted-foreground mt-2">Older</div>
-                    {groupedChats.older.map(renderLink)}
+                    <div className="px-2 py-1 text-xs text-muted-foreground mt-2">
+                      Older
+                    </div>
+                    {groupedChats.older.map(renderItem)}
                   </>
                 )}
               </SidebarMenu>
@@ -238,6 +363,27 @@ export function AppSidebar() {
         isOpen={showScheduler}
         onClose={() => setShowScheduler(false)}
       />
+
+      {/* ✅ DELETE CONFIRMATION DIALOG */}
+      <AlertDialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete this conversation and all its history.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleteId(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={confirmDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
