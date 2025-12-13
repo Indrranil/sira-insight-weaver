@@ -1,0 +1,7 @@
+node_modules
+dist
+build
+.git
+.DS_Store
+
+# Keep .env here if you want it copied, or add it to ignore if you pass secrets differently
