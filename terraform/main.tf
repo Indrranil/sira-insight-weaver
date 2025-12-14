@@ -24,7 +24,7 @@ resource "google_cloud_run_service" "frontend" {
         }
         
         ports {
-          container_port = 8080 # Cloud Run always listens on 8080
+          container_port = 80 # Cloud Run always listens on 8080
         }
       }
     }

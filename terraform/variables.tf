@@ -1,7 +1,7 @@
 variable "project_id" {
   description = "The Google Cloud Project ID"
   type        = string
-  default     = "tokyo-dynamo-455605-n1"  # Your Project ID
+  default     = "internal-apps-465610"  # Your Project ID
 }
 
 variable "region" {
